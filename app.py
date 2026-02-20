@@ -64,11 +64,13 @@ class RoadMonitor:
 
     def fetch_caltrans_page(self):
         """Fetch the Caltrans road conditions page for I-80 with robust retry logic."""
+        import requests
         from requests.adapters import HTTPAdapter
         from urllib3.util.retry import Retry
         
         # Try multiple approaches in order to handle Render network issues
         approaches = [
+            ('Direct IP connection', self._fetch_by_ip),
             ('Standard with close connection', self._fetch_with_close),
             ('Session with retry logic', self._fetch_with_retry),
             ('Simple fallback', self._fetch_simple)
@@ -88,6 +90,44 @@ class RoadMonitor:
         
         logger.error("All fetch approaches failed")
         return None
+    
+    def _fetch_by_ip(self):
+        """Approach 0: Direct IP connection to bypass DNS/routing issues"""
+        import socket
+        try:
+            # Resolve IP address
+            ip = socket.gethostbyname('roads.dot.ca.gov')
+            url = f'https://{ip}/roadscell.php?roadnumber=80'
+            
+            headers = {
+                'Host': 'roads.dot.ca.gov',  # Critical: set correct Host header for SSL
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Connection': 'close'
+            }
+            
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            
+            resp = requests.get(url, headers=headers, timeout=8, verify=False)
+            resp.raise_for_status()
+            return resp.text
+        except Exception as e:
+            # If IP fails, try with SSL disabled completely
+            try:
+                import ssl
+                import urllib3
+                urllib3.disable_warnings()
+                
+                session = requests.Session()
+                session.verify = False
+                
+                resp = session.get(Config.CALTRANS_URL, 
+                                 headers={'User-Agent': 'Mozilla/5.0 (compatible; I80Monitor/1.0)'}, 
+                                 timeout=8)
+                resp.raise_for_status()
+                return resp.text
+            except:
+                raise e
     
     def _fetch_with_close(self):
         """Approach 1: Force connection close to avoid hanging"""
