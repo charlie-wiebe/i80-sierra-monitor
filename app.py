@@ -65,9 +65,16 @@ class RoadMonitor:
     def fetch_caltrans_page(self):
         """Fetch the Caltrans road conditions page for I-80."""
         try:
-            resp = requests.get(Config.CALTRANS_URL, timeout=30)
+            # Reduced timeout to prevent hanging UI
+            resp = requests.get(Config.CALTRANS_URL, timeout=10)
             resp.raise_for_status()
             return resp.text
+        except requests.exceptions.Timeout:
+            logger.error("Caltrans website timeout - service may be slow or unavailable")
+            return None
+        except requests.exceptions.ConnectionError:
+            logger.error("Connection error to Caltrans website")
+            return None
         except Exception as e:
             logger.error(f"Error fetching Caltrans page: {e}")
             return None
@@ -240,6 +247,11 @@ class RoadMonitor:
         html = self.fetch_caltrans_page()
         if not html:
             logger.error("Failed to fetch Caltrans page")
+            # Update status to indicate fetch failure
+            current_road_status.update({
+                'status': 'fetch_error',
+                'last_check': datetime.now().isoformat(),
+            })
             return
 
         sierra_text = self.extract_sierra_section(html)
@@ -386,6 +398,12 @@ def stop_monitoring():
 def check_now():
     try:
         road_monitor.check_road_conditions()
+        if current_road_status.get('status') == 'fetch_error':
+            return jsonify({
+                'status': 'error', 
+                'message': 'Unable to fetch road conditions - Caltrans website may be unavailable',
+                'data': current_road_status
+            })
         return jsonify({'status': 'success', 'message': 'Check completed', 'data': current_road_status})
     except Exception as e:
         logger.error(f"Manual check failed: {e}")
