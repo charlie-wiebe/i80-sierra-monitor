@@ -63,32 +63,75 @@ current_road_status = {
 class RoadMonitor:
 
     def fetch_caltrans_page(self):
-        """Fetch the Caltrans road conditions page for I-80."""
-        try:
-            # Add browser headers to avoid blocking
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate',
-                'DNT': '1',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-            }
-            
-            # Reduced timeout to prevent hanging UI
-            resp = requests.get(Config.CALTRANS_URL, headers=headers, timeout=15)
-            resp.raise_for_status()
-            return resp.text
-        except requests.exceptions.Timeout:
-            logger.error("Caltrans website timeout - service may be slow or unavailable")
-            return None
-        except requests.exceptions.ConnectionError:
-            logger.error("Connection error to Caltrans website")
-            return None
-        except Exception as e:
-            logger.error(f"Error fetching Caltrans page: {e}")
-            return None
+        """Fetch the Caltrans road conditions page for I-80 with robust retry logic."""
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+        
+        # Try multiple approaches in order to handle Render network issues
+        approaches = [
+            ('Standard with close connection', self._fetch_with_close),
+            ('Session with retry logic', self._fetch_with_retry),
+            ('Simple fallback', self._fetch_simple)
+        ]
+        
+        for approach_name, fetch_func in approaches:
+            try:
+                logger.info(f"Trying {approach_name}...")
+                result = fetch_func()
+                if result:
+                    logger.info(f"Success with {approach_name}")
+                    return result
+                logger.warning(f"{approach_name} returned no data")
+            except Exception as e:
+                logger.error(f"{approach_name} failed: {e}")
+                continue
+        
+        logger.error("All fetch approaches failed")
+        return None
+    
+    def _fetch_with_close(self):
+        """Approach 1: Force connection close to avoid hanging"""
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Connection': 'close',  # Force connection close to avoid hanging
+        }
+        resp = requests.get(Config.CALTRANS_URL, headers=headers, timeout=8)
+        resp.raise_for_status()
+        return resp.text
+    
+    def _fetch_with_retry(self):
+        """Approach 2: Session with retry strategy"""
+        session = requests.Session()
+        
+        # Configure retries for network issues
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=0.5,
+            status_forcelist=[429, 500, 502, 503, 504, 524],
+            allowed_methods=['HEAD', 'GET', 'OPTIONS']
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy, pool_maxsize=1)
+        session.mount('http://', adapter)
+        session.mount('https://', adapter)
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Connection': 'close'
+        }
+        session.headers.update(headers)
+        
+        resp = session.get(Config.CALTRANS_URL, timeout=8)
+        resp.raise_for_status()
+        return resp.text
+    
+    def _fetch_simple(self):
+        """Approach 3: Minimal simple request"""
+        headers = {'User-Agent': 'Mozilla/5.0 (compatible; I80Monitor/1.0)'}
+        resp = requests.get(Config.CALTRANS_URL, headers=headers, timeout=5)
+        resp.raise_for_status()
+        return resp.text
 
     def extract_sierra_section(self, html):
         """Pull out the NORTHERN CALIFORNIA / SIERRA NEVADA section text."""
