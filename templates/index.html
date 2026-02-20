@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>I-80 Sierra Monitor</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6; color: #333; background: #f5f5f5;
+        }
+        .container { max-width: 900px; margin: 0 auto; padding: 20px; }
+
+        .header {
+            background: linear-gradient(135deg, #1a3a5c 0%, #2d6a9f 100%);
+            color: white; padding: 30px; margin-bottom: 24px;
+            border-radius: 12px; text-align: center;
+        }
+        .header h1 { font-size: 2rem; margin-bottom: 6px; }
+        .header p { font-size: 1rem; opacity: 0.85; }
+
+        .card {
+            background: white; border-radius: 12px; padding: 24px;
+            margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        .card h2 { margin-bottom: 16px; font-size: 1.2rem; }
+
+        /* --- Status banner --- */
+        .status-banner {
+            padding: 16px 24px; border-radius: 10px; font-weight: bold;
+            font-size: 1.15rem; margin-bottom: 20px; text-align: center;
+        }
+        .sb-open            { background: #d4edda; color: #155724; }
+        .sb-chains_required { background: #fff3cd; color: #856404; }
+        .sb-closed_eastbound,
+        .sb-closed_westbound { background: #f8d7da; color: #721c24; }
+        .sb-closed_both     { background: #c62828; color: #fff; }
+        .sb-unknown         { background: #e2e3e5; color: #383d41; }
+
+        /* --- Direction boxes --- */
+        .dir-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+        .dir-box {
+            padding: 16px; border-radius: 10px; text-align: center;
+            font-weight: 600; font-size: 1.05rem;
+        }
+        .dir-open   { background: #e8f5e9; color: #2e7d32; }
+        .dir-closed { background: #ffcdd2; color: #b71c1c; }
+
+        /* --- Condition items --- */
+        .cond-item {
+            border-left: 4px solid #ccc; padding: 10px 14px; margin-bottom: 10px;
+            background: #fafafa; border-radius: 0 6px 6px 0; font-size: 0.95rem;
+        }
+        .cond-closure { border-left-color: #c62828; }
+        .cond-chain   { border-left-color: #f9a825; }
+        .cond-other   { border-left-color: #90a4ae; }
+        .cond-dir { font-size: 0.8rem; color: #888; margin-top: 4px; }
+
+        /* --- Buttons --- */
+        .btn {
+            border: none; padding: 10px 20px; border-radius: 6px;
+            cursor: pointer; font-size: 0.95rem; margin-right: 8px;
+            margin-bottom: 8px; color: white; transition: opacity 0.2s;
+        }
+        .btn:hover { opacity: 0.85; }
+        .btn:disabled { opacity: 0.5; cursor: default; }
+        .btn-go    { background: #28a745; }
+        .btn-stop  { background: #dc3545; }
+        .btn-check { background: #007bff; }
+        .btn-test  { background: #f9a825; color: #333; }
+
+        .meta-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 14px; margin-bottom: 16px;
+        }
+        .meta-box { background: #f8f9fa; padding: 14px; border-radius: 8px; }
+        .meta-box h3 { font-size: 0.85rem; color: #888; margin-bottom: 4px; }
+        .meta-box p  { font-size: 1rem; font-weight: 600; }
+
+        .alert-box {
+            padding: 12px 16px; margin-bottom: 12px; border-radius: 6px;
+        }
+        .alert-ok  { background: #d4edda; color: #155724; }
+        .alert-err { background: #f8d7da; color: #721c24; }
+
+        .loading {
+            display: inline-block; width: 16px; height: 16px;
+            border: 2px solid #ccc; border-top-color: #333;
+            border-radius: 50%; animation: spin 0.6s linear infinite;
+            vertical-align: middle; margin-right: 6px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .raw-text {
+            background: #263238; color: #e0e0e0; padding: 16px;
+            border-radius: 8px; font-family: monospace; font-size: 0.85rem;
+            white-space: pre-wrap; max-height: 300px; overflow-y: auto;
+        }
+
+        .source-link {
+            font-size: 0.85rem; color: #888; text-align: center;
+            margin-top: 8px;
+        }
+        .source-link a { color: #2d6a9f; }
+    </style>
+</head>
+<body>
+<div class="container">
+
+    <div class="header">
+        <h1>I-80 Sierra Nevada Monitor</h1>
+        <p>Tahoe corridor closure alerts — Colfax to Nevada State Line</p>
+    </div>
+
+    <!-- Status Banner -->
+    <div class="status-banner sb-{{ status.status or 'unknown' }}">
+        {% if status.status == 'open' %}
+            I-80 Sierra is OPEN
+        {% elif status.status == 'chains_required' %}
+            Chain controls in effect — road is passable
+        {% elif status.status == 'closed_eastbound' %}
+            CLOSED EASTBOUND (to Tahoe)
+        {% elif status.status == 'closed_westbound' %}
+            CLOSED WESTBOUND (from Tahoe)
+        {% elif status.status == 'closed_both' %}
+            CLOSED BOTH DIRECTIONS
+        {% else %}
+            Status Unknown — click Check Now
+        {% endif %}
+    </div>
+
+    <!-- Direction Boxes -->
+    <div class="dir-grid">
+        <div class="dir-box {% if status.closed_eastbound %}dir-closed{% else %}dir-open{% endif %}">
+            Eastbound (to Tahoe)<br>
+            {{ "CLOSED" if status.closed_eastbound else "Open" }}
+        </div>
+        <div class="dir-box {% if status.closed_westbound %}dir-closed{% else %}dir-open{% endif %}">
+            Westbound (from Tahoe)<br>
+            {{ "CLOSED" if status.closed_westbound else "Open" }}
+        </div>
+    </div>
+
+    <!-- Closures -->
+    {% if status.closures %}
+    <div class="card">
+        <h2>Closures ({{ status.closures|length }})</h2>
+        {% for c in status.closures %}
+        <div class="cond-item cond-closure">
+            {{ c.text }}
+            <div class="cond-dir">Direction: {{ c.direction }}</div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Chain Controls -->
+    {% if status.chain_controls %}
+    <div class="card">
+        <h2>Chain Controls ({{ status.chain_controls|length }})</h2>
+        {% for cc in status.chain_controls %}
+        <div class="cond-item cond-chain">
+            {{ cc.text }}
+            <div class="cond-dir">Direction: {{ cc.direction }}</div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Other Restrictions -->
+    {% if status.other_restrictions %}
+    <div class="card">
+        <h2>Other Restrictions</h2>
+        {% for r in status.other_restrictions %}
+        <div class="cond-item cond-other">{{ r }}</div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Meta Info -->
+    <div class="meta-grid">
+        <div class="meta-box">
+            <h3>Last Check</h3>
+            <p id="last-check">{{ status.last_check or 'Never' }}</p>
+        </div>
+        <div class="meta-box">
+            <h3>Monitoring</h3>
+            <p>{% if monitoring %}Active ({{ check_interval }}s){% else %}Stopped{% endif %}</p>
+        </div>
+        <div class="meta-box">
+            <h3>Alerts</h3>
+            <p>{% if zapier_configured %}Zapier active{% else %}Not configured{% endif %}</p>
+        </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="card">
+        <h2>Controls</h2>
+        <button id="start-btn" class="btn btn-go" {% if monitoring %}disabled{% endif %}>Start Monitoring</button>
+        <button id="stop-btn"  class="btn btn-stop" {% if not monitoring %}disabled{% endif %}>Stop Monitoring</button>
+        <button id="check-btn" class="btn btn-check">Check Now</button>
+        <button id="test-btn"  class="btn btn-test">Test Alert</button>
+        <div id="alerts"></div>
+        <p style="margin-top:12px;"><a href="/logout" style="color:#888;font-size:0.85rem;">Log out</a></p>
+    </div>
+
+    <!-- Raw Caltrans Text -->
+    {% if status.sierra_raw %}
+    <div class="card">
+        <h2>Raw Caltrans Data — Sierra Nevada Section</h2>
+        <div class="raw-text">{{ status.sierra_raw }}</div>
+        <p class="source-link">
+            Source: <a href="https://roads.dot.ca.gov/?roadnumber=80" target="_blank">roads.dot.ca.gov</a>
+        </p>
+    </div>
+    {% endif %}
+
+</div>
+
+<script>
+    function showAlert(msg, ok) {
+        const d = document.getElementById('alerts');
+        const el = document.createElement('div');
+        el.className = 'alert-box ' + (ok ? 'alert-ok' : 'alert-err');
+        el.textContent = msg;
+        d.appendChild(el);
+        setTimeout(() => el.remove(), 5000);
+    }
+    function apiCall(url, btn) {
+        const orig = btn.textContent;
+        btn.innerHTML = '<span class="loading"></span>' + orig;
+        btn.disabled = true;
+        fetch(url, {method:'POST'}).then(r=>r.json()).then(d=>{
+            showAlert(d.message, d.status==='success');
+            if (d.status==='success' && url!=='/api/test_alert') setTimeout(()=>location.reload(),800);
+        }).catch(e=>showAlert('Error: '+e.message,false))
+          .finally(()=>{ btn.textContent=orig; btn.disabled=false; });
+    }
+    document.getElementById('start-btn').addEventListener('click', function(){ apiCall('/api/start_monitoring',this); });
+    document.getElementById('stop-btn').addEventListener('click',  function(){ apiCall('/api/stop_monitoring',this); });
+    document.getElementById('check-btn').addEventListener('click', function(){ apiCall('/api/check_now',this); });
+    document.getElementById('test-btn').addEventListener('click',  function(){ apiCall('/api/test_alert',this); });
+
+    {% if monitoring %}
+    setInterval(function(){
+        fetch('/api/status').then(r=>r.json()).then(d=>{
+            if(d.last_check) document.getElementById('last-check').textContent=d.last_check;
+        });
+    }, 30000);
+    {% endif %}
+</script>
+</body>
+</html>
